@@ -3,3 +3,5 @@ bin
 .vscode
 endless
 *.db
+
+settings.local.json

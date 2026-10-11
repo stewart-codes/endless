@@ -1283,6 +1283,7 @@ func streamPage(w http.ResponseWriter, r *http.Request, seedInput int64, app *Ap
         </div>
     </article>
 </body>
+<!-- Posts are not intended to be indexed by search engines. If your bot is indexing this, then you are not honoring my robots.txt rules. Bad bot. -->
 </html>`
 
 	w.Write([]byte(footerHTML))
