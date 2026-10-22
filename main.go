@@ -27,6 +27,12 @@ type CreateMarkovModelRequest struct {
 	Model   *store.MarkovChainModel `json:"model,omitempty"`
 }
 
+type ListMarkovModelsResponse struct {
+	Success bool                           `json:"success"`
+	Error   string                         `json:"error,omitempty"`
+	Models  []store.MarkovChainModelSummary `json:"models,omitempty"`
+}
+
 // TrainAPIAuth holds credentials for train API basic auth
 type TrainAPIAuth struct {
 	Username string
@@ -84,8 +90,8 @@ func trainAPIAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 type App struct {
-	store       store.PostStore
-	cachedModel *store.MarkovChainModel
+	store        store.PostStore
+	cachedChains []train.MarkovChain
 }
 
 const statsHtml = `<script src="https://dingdong.stewart.codes/tracker.js" data-endpoint="https://dingdong.stewart.codes"></script>`
@@ -129,6 +135,7 @@ func main() {
 	// need to restrict these to only allow requests from localhost
 	r.HandleFunc("/health", app.healthHandler).Methods("GET").Host("localhost")
 
+	r.HandleFunc("/api/train", trainAPIAuthMiddleware(app.listMarkovModelsHandler)).Methods("GET")
 	r.HandleFunc("/api/train", trainAPIAuthMiddleware(app.trainMarkovModelHandler)).Methods("POST")
 	r.HandleFunc("/api/train/{id}", trainAPIAuthMiddleware(app.updateMarkovModelHandler)).Methods("PUT")
 
@@ -148,22 +155,14 @@ func (app *App) homeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Get the latest model using cache
-	model, err := app.getLatestModel()
+	chains, err := app.getModelChains()
 	if err != nil {
-		http.Error(w, "Failed to retrieve model: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Load the model from JSON data
-	chain, err := train.LoadModel([]byte(model.ModelData))
-	if err != nil {
-		http.Error(w, "Failed to load model: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve models: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Generate 12 posts for the grid (3x4 layout)
-	posts, err := train.GenerateHomePagePosts(chain, 12)
+	posts, err := train.GenerateHomePagePosts(chains, 12)
 	if err != nil {
 		http.Error(w, "Failed to generate posts: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -425,22 +424,14 @@ func (app *App) authorPageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Get the latest model using cache
-	model, err := app.getLatestModel()
+	chains, err := app.getModelChains()
 	if err != nil {
-		http.Error(w, "Failed to retrieve model: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Load the model from JSON data
-	chain, err := train.LoadModel([]byte(model.ModelData))
-	if err != nil {
-		http.Error(w, "Failed to load model: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve models: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Generate 5 posts for the author
-	posts, err := train.GenerateAuthorPagePosts(chain, authorName, 5)
+	posts, err := train.GenerateAuthorPagePosts(chains, authorName, 5)
 	if err != nil {
 		http.Error(w, "Failed to generate posts: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -698,15 +689,13 @@ func (app *App) authorPageHandler(w http.ResponseWriter, r *http.Request) {
 	w.(http.Flusher).Flush()
 }
 
-// getLatestModel returns the latest model, using cache if available
-func (app *App) getLatestModel() (*store.MarkovChainModel, error) {
-	// Return cached model if available
-	if app.cachedModel != nil {
-		return app.cachedModel, nil
+// getModelChains returns all markov chains ordered by model id (cached in memory).
+func (app *App) getModelChains() ([]train.MarkovChain, error) {
+	if app.cachedChains != nil {
+		return app.cachedChains, nil
 	}
 
-	// Get the first available model from the database
-	models, err := app.store.GetAllMarkovChainModels(1)
+	models, err := app.store.GetAllMarkovChainModelsByID()
 	if err != nil {
 		log.Printf("Error retrieving models from database: %v", err)
 		return nil, err
@@ -717,15 +706,44 @@ func (app *App) getLatestModel() (*store.MarkovChainModel, error) {
 		return nil, fmt.Errorf("no models found in database")
 	}
 
-	// Cache the first (most recent) model
-	app.cachedModel = &models[0]
-	log.Printf("Retrieved and cached model ID: %d", app.cachedModel.ID)
-	return app.cachedModel, nil
+	chains := make([]train.MarkovChain, len(models))
+	for i, model := range models {
+		chain, err := train.LoadModel([]byte(model.ModelData))
+		if err != nil {
+			return nil, fmt.Errorf("load model id %d: %w", model.ID, err)
+		}
+		chains[i] = chain
+	}
+
+	app.cachedChains = chains
+	log.Printf("Loaded and cached %d markov model(s)", len(chains))
+	return app.cachedChains, nil
 }
 
-// clearModelCache clears the cached model
 func (app *App) clearModelCache() {
-	app.cachedModel = nil
+	app.cachedChains = nil
+}
+
+func (app *App) listMarkovModelsHandler(w http.ResponseWriter, r *http.Request) {
+	summaries, err := app.store.ListMarkovChainModelSummaries()
+	if err != nil {
+		response := ListMarkovModelsResponse{
+			Success: false,
+			Error:   "Failed to list models: " + err.Error(),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response := ListMarkovModelsResponse{
+		Success: true,
+		Models:  summaries,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (app *App) trainMarkovModelHandler(w http.ResponseWriter, r *http.Request) {
@@ -988,22 +1006,14 @@ func streamPage(w http.ResponseWriter, r *http.Request, seedInput int64, app *Ap
 	// Initialize random seed for jitter
 	prng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	// Get the latest model using cache
-	model, err := app.getLatestModel()
+	chains, err := app.getModelChains()
 	if err != nil {
-		http.Error(w, "Failed to retrieve model: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Load the model from JSON data
-	chain, err := train.LoadModel([]byte(model.ModelData))
-	if err != nil {
-		http.Error(w, "Failed to load model: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve models: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Generate story with the seed
-	story, err := train.GeneratePage(seedInput, chain)
+	story, err := train.GeneratePage(seedInput, chains)
 	if err != nil {
 		http.Error(w, "Failed to generate page: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1309,8 +1319,7 @@ func (app *App) sitemapHandler(w http.ResponseWriter, r *http.Request) {
 	// Set content type for XML
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 
-	// Get the latest model to generate some example posts for sitemap
-	model, err := app.getLatestModel()
+	chains, err := app.getModelChains()
 	if err != nil {
 		// If no model available, just return homepage
 		sitemapXML := `<?xml version="1.0" encoding="UTF-8"?>
@@ -1326,25 +1335,8 @@ func (app *App) sitemapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load the model and generate some example posts
-	chain, err := train.LoadModel([]byte(model.ModelData))
-	if err != nil {
-		// If model loading fails, just return homepage
-		sitemapXML := `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-    <url>
-        <loc>` + baseURL + `/</loc>
-        <lastmod>` + time.Now().Format("2006-01-02") + `</lastmod>
-        <changefreq>daily</changefreq>
-        <priority>1.0</priority>
-    </url>
-</urlset>`
-		w.Write([]byte(sitemapXML))
-		return
-	}
-
 	// Generate 20 example posts for sitemap
-	posts, err := train.GenerateHomePagePosts(chain, 20)
+	posts, err := train.GenerateHomePagePosts(chains, 20)
 	if err != nil {
 		// If post generation fails, just return homepage
 		sitemapXML := `<?xml version="1.0" encoding="UTF-8"?>

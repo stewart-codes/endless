@@ -21,6 +21,12 @@ type MarkovChainModel struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// MarkovChainModelSummary is model metadata without serialized chain data.
+type MarkovChainModelSummary struct {
+	ID        int    `json:"id"`
+	CreatedAt string `json:"created_at"`
+}
+
 // PostStore defines the interface for post storage operations
 type PostStore interface {
 
@@ -28,6 +34,8 @@ type PostStore interface {
 	SaveMarkovChainModel(modelData []byte) (*MarkovChainModel, error)
 	GetMarkovChainModel(id int) (*MarkovChainModel, error)
 	GetAllMarkovChainModels(limit int) ([]MarkovChainModel, error)
+	GetAllMarkovChainModelsByID() ([]MarkovChainModel, error)
+	ListMarkovChainModelSummaries() ([]MarkovChainModelSummary, error)
 	UpdateMarkovChainModel(id int, modelData []byte) (*MarkovChainModel, error)
 
 	// Database lifecycle
@@ -139,6 +147,48 @@ func (s *SQLiteStore) GetAllMarkovChainModels(limit int) ([]MarkovChainModel, er
 	}
 
 	return models, nil
+}
+
+// GetAllMarkovChainModelsByID returns every model ordered by id ascending (stable assignment order).
+func (s *SQLiteStore) GetAllMarkovChainModelsByID() ([]MarkovChainModel, error) {
+	rows, err := s.db.Query("SELECT id, model_data, created_at FROM markov_chain_model ORDER BY id ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var models []MarkovChainModel
+	for rows.Next() {
+		var model MarkovChainModel
+		err := rows.Scan(&model.ID, &model.ModelData, &model.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, model)
+	}
+
+	return models, nil
+}
+
+// ListMarkovChainModelSummaries returns id and created_at for all models (newest first).
+func (s *SQLiteStore) ListMarkovChainModelSummaries() ([]MarkovChainModelSummary, error) {
+	rows, err := s.db.Query("SELECT id, created_at FROM markov_chain_model ORDER BY id ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []MarkovChainModelSummary
+	for rows.Next() {
+		var summary MarkovChainModelSummary
+		err := rows.Scan(&summary.ID, &summary.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, summary)
+	}
+
+	return summaries, nil
 }
 
 // UpdateMarkovChainModel updates an existing markov chain model in the database

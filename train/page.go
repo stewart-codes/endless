@@ -17,8 +17,17 @@ type GeneratedPage struct {
 	Author      string
 }
 
-func GeneratePage(seed int64, chain MarkovChain) (GeneratedPage, error) {
+func GeneratePage(seed int64, chains []MarkovChain) (GeneratedPage, error) {
+	if len(chains) == 0 {
+		return GeneratedPage{}, fmt.Errorf("no markov chains available")
+	}
 	prng := rand.New(rand.NewSource(seed))
+	author := authors[prng.Intn(len(authors))]
+	return generatePageWithAuthor(seed, prng, author, chains)
+}
+
+func generatePageWithAuthor(seed int64, prng *rand.Rand, author string, chains []MarkovChain) (GeneratedPage, error) {
+	chain := ChainForAuthor(author, chains)
 	thisLink, err := createLinkFromSeed(seed, prng, chain)
 	if err != nil {
 		return GeneratedPage{}, err
@@ -32,7 +41,6 @@ func GeneratePage(seed int64, chain MarkovChain) (GeneratedPage, error) {
 		return GeneratedPage{}, err
 	}
 	lastUpdated := generateRandomDate(prng)
-	author := authors[prng.Intn(len(authors))]
 
 	page := GeneratedPage{
 		Link:        thisLink,
@@ -144,8 +152,27 @@ var authors = []string{
 	"Ethan Young",
 }
 
+// AuthorIndex returns the index of an author in the canonical authors list, or -1 if unknown.
+func AuthorIndex(name string) int {
+	for i, author := range authors {
+		if author == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// ChainForAuthor picks the markov chain for an author: chains[authorIndex % len(chains)].
+func ChainForAuthor(authorName string, chains []MarkovChain) MarkovChain {
+	authorIdx := AuthorIndex(authorName)
+	if authorIdx < 0 {
+		authorIdx = 0
+	}
+	return chains[authorIdx%len(chains)]
+}
+
 // GenerateHomePagePosts generates multiple posts for the home page grid
-func GenerateHomePagePosts(chain MarkovChain, count int) ([]GeneratedPage, error) {
+func GenerateHomePagePosts(chains []MarkovChain, count int) ([]GeneratedPage, error) {
 	// Use current time as base seed for consistent daily generation
 	baseSeed := time.Now().Unix() / 86400 // Daily seed (changes every day)
 
@@ -154,7 +181,7 @@ func GenerateHomePagePosts(chain MarkovChain, count int) ([]GeneratedPage, error
 		// Create a unique seed for each post based on the daily seed
 		postSeed := baseSeed + int64(i*1000) // Ensure unique seeds
 
-		post, err := GeneratePage(postSeed, chain)
+		post, err := GeneratePage(postSeed, chains)
 		if err != nil {
 			return nil, err
 		}
@@ -192,28 +219,23 @@ func GetAuthorBySlug(slug string) (string, bool) {
 	return "", false
 }
 
-// GenerateAuthorPagePosts generates posts for an author page
-// It keeps generating until it has the desired count of posts by the target author
-func GenerateAuthorPagePosts(chain MarkovChain, authorName string, count int) ([]GeneratedPage, error) {
-	// Use current time as base seed for consistent daily generation
+// GenerateAuthorPagePosts generates posts for an author page using that author's model.
+func GenerateAuthorPagePosts(chains []MarkovChain, authorName string, count int) ([]GeneratedPage, error) {
+	if AuthorIndex(authorName) < 0 {
+		return nil, fmt.Errorf("unknown author: %s", authorName)
+	}
+
 	baseSeed := time.Now().Unix() / 86400 // Daily seed (changes every day)
 
-	posts := make([]GeneratedPage, 0, count)
-	maxAttempts := count * 100 // Prevent infinite loops
-
-	for i := 0; len(posts) < count && i < maxAttempts; i++ {
-		// Create a unique seed for each post based on the daily seed
-		postSeed := baseSeed + int64(i*1000) // Ensure unique seeds
-
-		post, err := GeneratePage(postSeed, chain)
+	posts := make([]GeneratedPage, count)
+	for i := 0; i < count; i++ {
+		postSeed := baseSeed + int64(i*1000)
+		prng := rand.New(rand.NewSource(postSeed))
+		post, err := generatePageWithAuthor(postSeed, prng, authorName, chains)
 		if err != nil {
 			return nil, err
 		}
-
-		// Only include posts by the target author
-		if post.Author == authorName {
-			posts = append(posts, post)
-		}
+		posts[i] = post
 	}
 
 	return posts, nil
