@@ -89,7 +89,10 @@ type App struct {
 }
 
 const statsHtml = `<script src="https://dingdong.stewart.codes/tracker.js" data-endpoint="https://dingdong.stewart.codes"></script>`
-
+func extraHeaders()string{
+    extraHeaderEnv := os.Getenv("EXTRA_HEADER_HTML")
+    return statsHtml + extraHeaderEnv
+}
 func main() {
 	sqliteDbPath := os.Getenv("SQLITE_DB_DIR")
 	if sqliteDbPath == "" {
@@ -355,7 +358,7 @@ func (app *App) homeHandler(w http.ResponseWriter, r *http.Request) {
             }
         }
     </style>
-	` + statsHtml + `
+	` + extraHeaders() + `
 </head>
 <body>
     <div class="header">
@@ -641,7 +644,7 @@ func (app *App) authorPageHandler(w http.ResponseWriter, r *http.Request) {
             }
         }
     </style>
-	` + statsHtml + `
+	` + extraHeaders() + `
 </head>
 <body>
     <!-- Breadcrumb navigation for SEO -->
