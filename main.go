@@ -1096,7 +1096,7 @@ func streamPage(w http.ResponseWriter, r *http.Request, seedInput int64, app *Ap
         "keywords": "story, fiction, narrative, creative writing, ` + html.EscapeString(story.Author) + `"
     }
     </script>
-	` + statsHtml + `
+	` + extraHeaders() + `
     
     <!-- Additional SEO Meta Tags -->
     <meta name="theme-color" content="#007cba">
